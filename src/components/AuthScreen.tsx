@@ -10,6 +10,7 @@ export function AuthScreen({ onLogin, onRegister }: AuthScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export function AuthScreen({ onLogin, onRegister }: AuthScreenProps) {
                 <input
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
-                  placeholder="Brandon Lafford"
+                  placeholder="Jane Doe"
                   minLength={3}
                   maxLength={40}
                   title="Use 3 to 40 characters. Letters, numbers, spaces, apostrophes, dots, and hyphens are allowed."
@@ -103,11 +104,20 @@ export function AuthScreen({ onLogin, onRegister }: AuthScreenProps) {
               <input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 placeholder="At least 6 characters"
                 minLength={6}
                 required
               />
+            </label>
+
+            <label className="password-toggle">
+              <input
+                type="checkbox"
+                checked={showPassword}
+                onChange={(event) => setShowPassword(event.target.checked)}
+              />
+              <span>Show password</span>
             </label>
 
             {error ? <div className="form-message form-message--error">{error}</div> : null}

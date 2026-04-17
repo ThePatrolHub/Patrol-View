@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
+import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import { divIcon, type LatLngExpression } from 'leaflet';
 import type { AlertRecord, PatrolPoint, PlannedRoute, UserProfile } from '../types';
 import { DEFAULT_CENTER, DEFAULT_ZOOM, getPatrollerTrackingStatus, googleMapsDirectionsUrl } from '../utils';
@@ -17,9 +17,10 @@ interface MapPanelProps {
   viewerRoute: PatrolPoint[];
   selectedPatrollerRoute: PatrolPoint[];
   draftRoutePoints: DraftPoint[];
+  draftRouteAnchors: DraftPoint[];
   drawMode: boolean;
   focusedUser: UserProfile | null;
-  onAddDraftPoint: (point: DraftPoint) => void;
+  onAddDraftPoint: (point: DraftPoint) => Promise<void> | void;
 }
 
 const ownMarker = divIcon({ className: 'map-pin map-pin--self', html: '<span></span>', iconSize: [20, 20], iconAnchor: [10, 10] });
@@ -60,6 +61,7 @@ export function MapPanel({
   viewerRoute,
   selectedPatrollerRoute,
   draftRoutePoints,
+  draftRouteAnchors,
   drawMode,
   focusedUser,
   onAddDraftPoint,
@@ -123,6 +125,21 @@ export function MapPanel({
             pathOptions={{ color: '#f59e0b', weight: 4, opacity: 0.9, dashArray: '8 8' }}
           />
         ) : null}
+
+
+        {draftRouteAnchors.map((point, index) => (
+          <CircleMarker
+            key={`draft-anchor-${index}`}
+            center={[point.lat, point.lng]}
+            radius={6}
+            pathOptions={{ color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.92 }}
+          >
+            <Popup>
+              <strong>{index === 0 ? 'Route start' : `Route stop ${index + 1}`}</strong>
+            </Popup>
+          </CircleMarker>
+        ))}
+
 
         {ownLocation ? (
           <>

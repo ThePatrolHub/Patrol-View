@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/firebase.ts","./src/main.tsx","./src/types.ts","./src/utils.ts","./src/vite-env.d.ts","./src/components/AuthScreen.tsx","./src/components/GlassCard.tsx","./src/components/MapPanel.tsx","./src/components/ToastStack.tsx"],"errors":true,"version":"5.8.3"}

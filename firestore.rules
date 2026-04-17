@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function myUserPath() {
+      return userPath(request.auth.uid);
+    }
+
+    function myProfileExists() {
+      return signedIn() && exists(myUserPath());
+    }
+
+    function myProfile() {
+      return get(myUserPath());
+    }
+
+    function isApproved() {
+      return myProfileExists() && myProfile().data.approved == true;
+    }
+
+    function isAdmin() {
+      return isApproved() && myProfile().data.role == 'admin';
+    }
+
+    function ownsUser(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function canReadApprovedData() {
+      return isApproved() || isAdmin();
+    }
+
+    match /usernames/{usernameLower} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'usernameLower', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.usernameLower == usernameLower
+        && !exists(/databases/$(database)/documents/usernames/$(usernameLower));
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if ownsUser(uid) || canReadApprovedData();
+      allow create: if ownsUser(uid)
+        && request.resource.data.keys().hasOnly([
+          'uid', 'email', 'username', 'usernameLower', 'displayName', 'approved',
+          'role', 'avatarColor', 'isPatrolling', 'currentPatrolId',
+          'currentPatrolStartedAt', 'lastLocation', 'lastSeenAt', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.approved == false
+        && request.resource.data.role == 'user'
+        && request.resource.data.isPatrolling == false;
+      allow update: if isAdmin() || (ownsUser(uid) && canUpdateOwnUser());
+      allow delete: if false;
+
+      function canUpdateOwnUser() {
+        return request.resource.data.keys().hasOnly([
+            'uid', 'email', 'username', 'usernameLower', 'displayName', 'approved',
+            'role', 'avatarColor', 'isPatrolling', 'currentPatrolId',
+            'currentPatrolStartedAt', 'lastLocation', 'lastSeenAt', 'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.username == resource.data.username
+          && request.resource.data.usernameLower == resource.data.usernameLower
+          && request.resource.data.approved == resource.data.approved
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'displayName', 'avatarColor', 'isPatrolling', 'currentPatrolId',
+            'currentPatrolStartedAt', 'lastLocation', 'lastSeenAt', 'updatedAt'
+          ]);
+      }
+    }
+
+    match /patrols/{patrolId} {
+      allow read: if canReadApprovedData();
+      allow create: if canReadApprovedData()
+        && request.resource.data.keys().hasOnly([
+          'userId', 'username', 'startedAt', 'endedAt', 'active',
+          'durationSeconds', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.active == true;
+      allow update: if isAdmin() || (canReadApprovedData() && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.username == resource.data.username
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'endedAt', 'active', 'durationSeconds', 'updatedAt'
+        ]));
+      allow delete: if false;
+
+      match /points/{pointId} {
+        allow read: if canReadApprovedData();
+        allow create: if canReadApprovedData()
+          && request.resource.data.keys().hasOnly([
+            'userId', 'patrolId', 'lat', 'lng', 'accuracy',
+            'heading', 'speed', 'recordedAt'
+          ])
+          && request.resource.data.userId == request.auth.uid
+          && request.resource.data.patrolId == patrolId;
+        allow update, delete: if false;
+      }
+    }
+
+    match /plannedRoutes/{routeId} {
+      allow read: if canReadApprovedData();
+      allow create: if canReadApprovedData()
+        && request.resource.data.keys().hasOnly([
+          'createdBy', 'username', 'name', 'points', 'archived', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.archived == false;
+      allow update: if isAdmin() || (canReadApprovedData()
+        && resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.username == resource.data.username);
+      allow delete: if isAdmin() || (canReadApprovedData() && resource.data.createdBy == request.auth.uid);
+    }
+
+    match /alerts/{alertId} {
+      allow read: if canReadApprovedData();
+      allow create: if canReadApprovedData()
+        && request.resource.data.keys().hasOnly([
+          'createdBy', 'username', 'message', 'location', 'active', 'createdAt', 'resolvedAt'
+        ])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.active == true;
+      allow update: if isAdmin() || (canReadApprovedData()
+        && resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.username == resource.data.username
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'active', 'resolvedAt', 'message', 'location'
+        ]));
+      allow delete: if false;
+    }
+
+    match /posts/{postId} {
+      allow read: if canReadApprovedData();
+      allow create: if canReadApprovedData()
+        && request.resource.data.keys().hasOnly([
+          'authorId', 'username', 'content', 'mentions', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.authorId == request.auth.uid;
+      allow update: if isAdmin() || (canReadApprovedData()
+        && resource.data.authorId == request.auth.uid
+        && request.resource.data.authorId == resource.data.authorId
+        && request.resource.data.username == resource.data.username
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'content', 'mentions', 'updatedAt'
+        ]));
+      allow delete: if isAdmin() || (canReadApprovedData() && resource.data.authorId == request.auth.uid);
+    }
+
+    match /mentions/{uid}/items/{mentionId} {
+      allow read: if ownsUser(uid) || isAdmin();
+      allow create: if canReadApprovedData()
+        && request.resource.data.keys().hasOnly([
+          'toUid', 'fromUid', 'fromUsername', 'postId', 'createdAt', 'read', 'readAt'
+        ])
+        && request.resource.data.toUid == uid
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.read == false;
+      allow update: if ownsUser(uid)
+        && request.resource.data.toUid == resource.data.toUid
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.fromUsername == resource.data.fromUsername
+        && request.resource.data.postId == resource.data.postId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+      allow delete: if ownsUser(uid) || isAdmin();
+    }
+  }
+}

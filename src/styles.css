@@ -73,6 +73,30 @@ textarea {
   resize: vertical;
 }
 
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  accent-color: var(--cyan);
+}
+
+.password-toggle {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 0.7rem;
+  width: fit-content;
+  color: var(--muted);
+}
+
+.password-toggle span {
+  font-size: 0.94rem;
+}
+
+.route-tools small {
+  color: var(--muted);
+}
+
 code {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);

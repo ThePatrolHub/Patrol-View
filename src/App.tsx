@@ -102,6 +102,35 @@ function getActiveMentionDraft(value: string, caretPosition: number) {
   } satisfies ActiveMentionDraft;
 }
 
+async function fetchWalkRouteSegment(start: { lat: number; lng: number }, end: { lat: number; lng: number }) {
+  const url = new URL(
+    `https://router.project-osrm.org/route/v1/foot/${start.lng},${start.lat};${end.lng},${end.lat}`
+  );
+  url.searchParams.set('overview', 'full');
+  url.searchParams.set('geometries', 'geojson');
+  url.searchParams.set('steps', 'false');
+
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error('Route snapping service is temporarily unavailable.');
+  }
+
+  const payload = (await response.json()) as {
+    routes?: Array<{ geometry?: { coordinates?: [number, number][] } }>;
+  };
+
+  const coordinates = payload.routes?.[0]?.geometry?.coordinates;
+  if (!coordinates?.length) {
+    return null;
+  }
+
+  return coordinates.map(([lng, lat]) => ({ lat, lng }));
+}
+
+function flattenDraftRouteSegments(segments: Array<Array<{ lat: number; lng: number }>>) {
+  return segments.flatMap((segment, index) => (index === 0 ? segment : segment.slice(1)));
+}
+
 function usePatrolTracker(profile: UserProfile | null, pushToast: (title: string, body: string) => void): PatrolTrackerResult {
   const [viewerRoute, setViewerRoute] = useState<PatrolPoint[]>([]);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -213,12 +242,14 @@ function usePatrolTracker(profile: UserProfile | null, pushToast: (title: string
           speed: position.coords.speed ?? null,
         };
 
+        setGpsWarning(null);
+
         const now = Date.now();
         const previous = lastSavedRef.current;
         const shouldPersist =
           !previous ||
-          now - previous.at > 15000 ||
-          haversineMeters({ lat: previous.lat, lng: previous.lng }, point) > 15;
+          now - previous.at > 20000 ||
+          haversineMeters({ lat: previous.lat, lng: previous.lng }, point) > 20;
 
         try {
           await updateDoc(doc(db, 'users', profile.uid), {
@@ -247,7 +278,7 @@ function usePatrolTracker(profile: UserProfile | null, pushToast: (title: string
           setGpsWarning('Live GPS update is delayed. Keep the page open, wait a few seconds, and make sure precise location is allowed in your browser settings.');
         }
       },
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+      { enableHighAccuracy: false, maximumAge: 20000, timeout: 30000 }
     );
   }, [profile]);
 
@@ -453,7 +484,8 @@ function App() {
   const [selectedPatroller, setSelectedPatroller] = useState<UserProfile | null>(null);
   const [selectedPatrollerRoute, setSelectedPatrollerRoute] = useState<PatrolPoint[]>([]);
   const [draftRouteName, setDraftRouteName] = useState('Evening Patrol Route');
-  const [draftRoutePoints, setDraftRoutePoints] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [draftRouteAnchors, setDraftRouteAnchors] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [draftRouteSegments, setDraftRouteSegments] = useState<Array<Array<{ lat: number; lng: number }>>>([]);
   const [drawMode, setDrawMode] = useState(false);
   const [postInput, setPostInput] = useState('');
   const [activeMentionDraft, setActiveMentionDraft] = useState<ActiveMentionDraft | null>(null);
@@ -471,6 +503,8 @@ function App() {
   const resumedPatrolToastShown = useRef(false);
   const backgroundReturnToastShown = useRef(false);
   const postComposerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const draftRoutePoints = useMemo(() => flattenDraftRouteSegments(draftRouteSegments), [draftRouteSegments]);
 
   const pushToast = useCallback((title: string, body: string) => {
     const next = { id: `${Date.now()}-${Math.random()}`, title, body };
@@ -865,6 +899,37 @@ function App() {
     pushToast('Alert closed', 'The assistance alert has been resolved.');
   }, [pushToast]);
 
+  const addDraftRouteStop = useCallback(async (point: { lat: number; lng: number }) => {
+    if (routeBusy) return;
+    setRouteBusy(true);
+
+    try {
+      if (!draftRouteAnchors.length) {
+        setDraftRouteAnchors([point]);
+        setDraftRouteSegments([[point]]);
+        pushToast('Route start added', 'Tap the next street corner or destination and the app will try to follow the road network.');
+        return;
+      }
+
+      const previousAnchor = draftRouteAnchors[draftRouteAnchors.length - 1];
+      let nextSegment = [previousAnchor, point];
+
+      try {
+        const snappedSegment = await fetchWalkRouteSegment(previousAnchor, point);
+        if (snappedSegment && snappedSegment.length > 1) {
+          nextSegment = snappedSegment;
+        }
+      } catch {
+        pushToast('Snapping unavailable', 'The free road-snapping service did not respond, so this segment was added as a straight line.');
+      }
+
+      setDraftRouteAnchors((current) => [...current, point]);
+      setDraftRouteSegments((current) => [...current, nextSegment]);
+    } finally {
+      setRouteBusy(false);
+    }
+  }, [draftRouteAnchors, pushToast, routeBusy]);
+
   const savePlannedRoute = useCallback(async () => {
     if (!profile || draftRoutePoints.length < 2) {
       pushToast('Route not saved', 'Add at least two map points before saving a route.');
@@ -882,13 +947,14 @@ function App() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      setDraftRoutePoints([]);
+      setDraftRouteAnchors([]);
+      setDraftRouteSegments([]);
       setDrawMode(false);
       pushToast('Route saved', 'Everyone can now see the planned route on the shared map.');
     } finally {
       setRouteBusy(false);
     }
-  }, [draftRouteName, draftRoutePoints, profile, pushToast]);
+  }, [draftRouteName, draftRouteAnchors, draftRoutePoints, profile, pushToast]);
 
   const submitPost = useCallback(async () => {
     if (!profile || !postInput.trim()) return;
@@ -1079,15 +1145,16 @@ function App() {
                 viewerRoute={patrolTracker.viewerRoute}
                 selectedPatrollerRoute={selectedPatrollerRoute}
                 draftRoutePoints={draftRoutePoints}
+                draftRouteAnchors={draftRouteAnchors}
                 drawMode={drawMode}
                 focusedUser={focusedUser}
-                onAddDraftPoint={(point) => setDraftRoutePoints((current) => [...current, point])}
+                onAddDraftPoint={addDraftRouteStop}
               />
             </GlassCard>
 
             <GlassCard
               title="Route planner"
-              subtitle="Turn draw mode on, click the map to drop route points, then save the planned route for everyone to see."
+              subtitle="Turn draw mode on, tap a start point, then tap major turns or a destination. The planner now tries to snap each segment onto nearby streets."
             >
               <div className="route-tools">
                 <label>
@@ -1099,17 +1166,23 @@ function App() {
                   <button className={drawMode ? 'primary-button' : 'ghost-button'} onClick={() => setDrawMode((value) => !value)}>
                     {drawMode ? 'Drawing on' : 'Enable draw mode'}
                   </button>
-                  <button className="ghost-button" onClick={() => setDraftRoutePoints((current) => current.slice(0, -1))} disabled={!draftRoutePoints.length}>
-                    Undo last point
+                  <button className="ghost-button" onClick={() => {
+                    setDraftRouteAnchors((current) => current.slice(0, -1));
+                    setDraftRouteSegments((current) => current.slice(0, -1));
+                  }} disabled={!draftRouteAnchors.length}>
+                    Undo last stop
                   </button>
-                  <button className="ghost-button" onClick={() => setDraftRoutePoints([])} disabled={!draftRoutePoints.length}>
+                  <button className="ghost-button" onClick={() => {
+                    setDraftRouteAnchors([]);
+                    setDraftRouteSegments([]);
+                  }} disabled={!draftRouteAnchors.length}>
                     Clear draft
                   </button>
                   <button className="primary-button" onClick={savePlannedRoute} disabled={routeBusy || draftRoutePoints.length < 2}>
-                    Save planned route
+                    {routeBusy ? 'Working...' : 'Save planned route'}
                   </button>
                 </div>
-                <small>{draftRoutePoints.length} point(s) in the current draft route.</small>
+                <small>{draftRouteAnchors.length} stop(s) selected · {draftRoutePoints.length} road points in the current draft route.</small>
               </div>
             </GlassCard>
           </div>
